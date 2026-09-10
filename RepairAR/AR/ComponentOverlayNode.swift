@@ -121,7 +121,7 @@ final class ComponentOverlayNode: SCNNode {
         material.emission.intensity = 0.8
         material.isDoubleSided = true
         material.transparency = 0.7
-        material.blingModel = .physicallyBased
+        material.lightingModel = .physicallyBased
         return material
     }
 
@@ -151,7 +151,7 @@ final class ComponentOverlayNode: SCNNode {
                 for material in geometry.materials {
                     material.diffuse.contents = color.withAlphaComponent(0.3 + intensity * 0.4)
                     material.emission.contents = color
-                    material.emission.intensity = Float(intensity)
+                    material.emission.intensity = intensity
                     material.transparency = 0.3 + intensity * 0.7
                 }
             }
@@ -193,9 +193,10 @@ final class ComponentOverlayNode: SCNNode {
     }
 
     private func applyAnimations(for state: ComponentState) {
-        // Remove existing animations
+        // Remove existing animations (node actions + material glow on all descendants)
         geometryNode?.removeAllAnimations()
         geometryNode?.removeAllActions()
+        removeGlowAnimations()
 
         switch state {
         case .currentFocus:
@@ -218,9 +219,7 @@ final class ComponentOverlayNode: SCNNode {
     }
 
     private func startGlowAnimation() {
-        guard let geometry = geometryNode?.geometry else { return }
-
-        let glowAnim = CABasicAnimation(keyPath: "material.emission.intensity")
+        let glowAnim = CABasicAnimation(keyPath: "emission.intensity")
         glowAnim.fromValue = 0.5
         glowAnim.toValue = 1.2
         glowAnim.duration = 1.0
@@ -228,8 +227,23 @@ final class ComponentOverlayNode: SCNNode {
         glowAnim.repeatCount = .infinity
         glowAnim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
-        for material in geometry.materials {
-            material.add(glowAnim, forKey: "glow")
+        // SCNMaterial is SCNAnimatable: use addAnimation (not add),
+        // on every descendant material (container nodes have no geometry themselves)
+        enumerateChildNodes { child, _ in
+            guard let geometry = child.geometry else { return }
+            for material in geometry.materials {
+                guard let animCopy = glowAnim.copy() as? CABasicAnimation else { continue }
+                material.addAnimation(animCopy, forKey: "glow")
+            }
+        }
+    }
+
+    private func removeGlowAnimations() {
+        enumerateChildNodes { child, _ in
+            guard let geometry = child.geometry else { return }
+            for material in geometry.materials {
+                material.removeAnimation(forKey: "glow")
+            }
         }
     }
 
@@ -238,6 +252,7 @@ final class ComponentOverlayNode: SCNNode {
     override func removeFromParentNode() {
         geometryNode?.removeAllActions()
         geometryNode?.removeAllAnimations()
+        removeGlowAnimations()
         super.removeFromParentNode()
     }
 }

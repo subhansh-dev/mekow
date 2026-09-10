@@ -588,10 +588,8 @@ final class ARViewController: UIViewController {
 extension ARViewController: ARSCNViewDelegate {
     func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
         guard let imageAnchor = anchor as? ARImageAnchor else { return nil }
-        let plane = SCNPlane(
-            width: imageAnchor.referenceImage.physicalWidth,
-            height: imageAnchor.referenceImage.physicalHeight
-        )
+        let physicalSize = imageAnchor.referenceImage.physicalSize
+        let plane = SCNPlane(width: physicalSize.width, height: physicalSize.height)
         let node = SCNNode(geometry: plane)
         node.eulerAngles.x = -.pi / 2
         node.opacity = 0

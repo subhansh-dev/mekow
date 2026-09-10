@@ -87,17 +87,17 @@ final class AnnotationNode: SKNode {
         arrowNode.strokeColor = color.withAlphaComponent(0.6)
         arrowNode.lineWidth = 1.5
 
-        // Add nodes
-        addChildNode(dotNode)
-        addChildNode(arrowNode)
-        addChildNode(backgroundNode)
+        // Add nodes (SKNode uses addChild, not addChildNode)
+        addChild(dotNode)
+        addChild(arrowNode)
+        addChild(backgroundNode)
 
         textLabel.position = CGPoint(x: 0, y: hasDetail ? 6 : 0)
-        addChildNode(textLabel)
+        addChild(textLabel)
 
         if hasDetail {
             detailLabel.position = CGPoint(x: 0, y: -10)
-            addChildNode(detailLabel)
+            addChild(detailLabel)
         }
 
         // Offset everything above the dot
