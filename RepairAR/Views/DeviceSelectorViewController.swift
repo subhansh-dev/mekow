@@ -118,7 +118,9 @@ extension DeviceSelectorViewController: UICollectionViewDataSource {
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: cellIdentifier, for: indexPath) as! DeviceCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: cellIdentifier, for: indexPath) as? DeviceCell else {
+            return UICollectionViewCell()
+        }
         let devices = isSearching ? filteredDevices : allDevices
         let device = devices[indexPath.item]
         cell.configure(with: device)

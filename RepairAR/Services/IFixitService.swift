@@ -173,12 +173,54 @@ final class IFixitService {
     // MARK: - Public API
 
     /// Search iFixit for guides matching a query.
-    func searchGuides(query: String) async -> Result<[IFixitGuide], APIError> {
+    /// NOTE: /search/ returns {results, total}, not [IFixitGuide] — use SearchResult.
+    /// Use guideID(from:) + fetchGuide(guideID:) to get full guide bodies.
+    func searchGuides(query: String) async -> Result<SearchResult, APIError> {
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(baseURL)/search/\(encoded)?limit=20") else {
             return .failure(.invalidURL)
         }
         return await performRequest(url: url, useCache: true, cacheTTL: 1800)
+    }
+
+    /// Extract numeric guideID from a SearchResultItem (url tail or objectID).
+    /// e.g. https://www.ifixit.com/Guide/MacBook_Battery/123456 -> 123456
+    func guideID(from item: SearchResultItem) -> Int? {
+        // Try objectID first (may be numeric string)
+        if let objectID = item.objectID, let id = Int(objectID) {
+            return id
+        }
+        // Fall back to parsing URL: last path component that is Int
+        guard let urlString = item.url else { return nil }
+        let components = urlString.split(separator: "/").reversed()
+        for part in components {
+            // Strip query params
+            let clean = part.split(separator: "?").first.map(String.init) ?? String(part)
+            if let id = Int(clean) {
+                return id
+            }
+        }
+        return nil
+    }
+
+    /// Convenience: search then fetch full guides for guide-type hits (max 5 to avoid hammering API).
+    func searchAndFetchGuides(query: String, maxGuides: Int = 5) async -> Result<[IFixitGuide], APIError> {
+        let searchResult = await searchGuides(query: query)
+        switch searchResult {
+        case .failure(let err):
+            return .failure(err)
+        case .success(let result):
+            let items = (result.results ?? []).filter { ($0.type ?? "").lowercased() == "guide" }
+            var guides: [IFixitGuide] = []
+            for item in items.prefix(maxGuides) {
+                guard let gid = guideID(from: item) else { continue }
+                let guideResult = await fetchGuide(guideID: gid)
+                if case .success(let guide) = guideResult {
+                    guides.append(guide)
+                }
+            }
+            return .success(guides)
+        }
     }
 
     /// Fetch a specific guide by ID.

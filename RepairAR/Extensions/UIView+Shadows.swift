@@ -105,3 +105,43 @@ extension UIView {
         }
     }
 }
+
+// MARK: - Async Image Loading (for iFixit / guide media)
+
+private let sharedImageCache = NSCache<NSString, UIImage>()
+
+extension UIImageView {
+    /// Load image from URL string with in-memory cache. Hides view if URL nil/invalid.
+    /// Call from main thread; completion hops back to main.
+    func loadImage(from urlString: String?, placeholder: UIImage? = nil) {
+        // Cancel previous association via tag on task? Simple: reset first
+        image = placeholder
+
+        guard let urlString = urlString, !urlString.isEmpty,
+              let url = URL(string: urlString) else {
+            isHidden = urlString == nil || urlString?.isEmpty == true
+            return
+        }
+        isHidden = false
+
+        let key = NSString(string: urlString)
+        if let cached = sharedImageCache.object(forKey: key) {
+            image = cached
+            return
+        }
+
+        Task { [weak self] in
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard let img = UIImage(data: data) else { return }
+                sharedImageCache.setObject(img, forKey: key)
+                await MainActor.run {
+                    self?.image = img
+                }
+            } catch {
+                // Keep placeholder on failure — no crash
+                return
+            }
+        }
+    }
+}

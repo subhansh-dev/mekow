@@ -51,6 +51,9 @@ final class ProgressIndicatorView: UIView {
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         progressLabel.translatesAutoresizingMaskIntoConstraints = false
+        stackView.spacing = spacing
+        progressLabel.setContentHuggingPriority(.required, for: .horizontal)
+        progressLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         // Create dots
         for i in 0..<totalSteps {
@@ -67,13 +70,15 @@ final class ProgressIndicatorView: UIView {
         }
 
         NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: topAnchor),
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stackView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: progressLabel.leadingAnchor, constant: -8),
+            stackView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
 
             progressLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             progressLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            progressLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 32),
         ])
 
         setCurrentStep(0)

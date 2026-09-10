@@ -12,6 +12,8 @@ final class GuideListViewController: UIViewController {
     private var tableView: UITableView!
     private var headerView: UIView!
     private var emptyLabel: UILabel!
+    private var onlineStatusLabel: UILabel!
+    private var isFetchingOnline = false
 
     private let cellIdentifier = "GuideCell"
     private let padding: CGFloat = 16
@@ -35,6 +37,13 @@ final class GuideListViewController: UIViewController {
         title = device.displayName
         loadData()
         setupUI()
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "globe"),
+            style: .plain,
+            target: self,
+            action: #selector(searchOnlineTapped)
+        )
+        navigationItem.rightBarButtonItem?.tintColor = UIColor(hex: "#00D4FF")
     }
 
     // MARK: - Data
@@ -77,6 +86,14 @@ final class GuideListViewController: UIViewController {
         guidesTitle.textColor = .white
         guidesTitle.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(guidesTitle)
+
+        // Online status (hidden unless fetching / online results)
+        onlineStatusLabel = UILabel()
+        onlineStatusLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        onlineStatusLabel.textColor = UIColor(hex: "#00D4FF")
+        onlineStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        onlineStatusLabel.isHidden = true
+        view.addSubview(onlineStatusLabel)
 
         // Table view
         tableView = UITableView(frame: .zero, style: .plain)
@@ -122,7 +139,11 @@ final class GuideListViewController: UIViewController {
             guidesTitle.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: 16),
             guidesTitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
 
-            tableView.topAnchor.constraint(equalTo: guidesTitle.bottomAnchor, constant: 12),
+            onlineStatusLabel.topAnchor.constraint(equalTo: guidesTitle.bottomAnchor, constant: 4),
+            onlineStatusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: padding),
+            onlineStatusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -padding),
+
+            tableView.topAnchor.constraint(equalTo: onlineStatusLabel.bottomAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -132,6 +153,58 @@ final class GuideListViewController: UIViewController {
             emptyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
             emptyLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40),
         ])
+    }
+
+    // MARK: - Online Search
+
+    @objc private func searchOnlineTapped() {
+        let alert = UIAlertController(title: "Search iFixit", message: "Find online guides for this device", preferredStyle: .alert)
+        alert.addTextField { tf in
+            tf.text = self.device.name
+            tf.placeholder = "e.g. MacBook Pro 14 battery"
+            tf.autocorrectionType = .no
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Search", style: .default) { [weak self, weak alert] _ in
+            guard let query = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !query.isEmpty else { return }
+            self?.performOnlineSearch(query: query)
+        })
+        present(alert, animated: true)
+    }
+
+    private func performOnlineSearch(query: String) {
+        guard !isFetchingOnline else { return }
+        isFetchingOnline = true
+        onlineStatusLabel.isHidden = false
+        onlineStatusLabel.text = "Searching iFixit for “\(query)”…"
+        emptyLabel.isHidden = true
+
+        Task { [weak self] in
+            guard let self = self else { return }
+            let result = await DataManager.shared.searchAndFetchOnlineGuides(query: query)
+            await MainActor.run {
+                self.isFetchingOnline = false
+                switch result {
+                case .failure(let err):
+                    self.onlineStatusLabel.text = "Online search failed: \(err.localizedDescription)"
+                    self.emptyLabel.isHidden = !self.guides.isEmpty
+                case .success(let ifixitGuides):
+                    if ifixitGuides.isEmpty {
+                        self.onlineStatusLabel.text = "No online guides found for “\(query)”"
+                    } else {
+                        let converted = ifixitGuides.map { DataManager.shared.convertIFixitGuide($0) }
+                        // Avoid duplicates by id
+                        let existingIDs = Set(self.guides.map { $0.id })
+                        let fresh = converted.filter { !existingIDs.contains($0.id) }
+                        self.guides.append(contentsOf: fresh)
+                        self.onlineStatusLabel.text = "+\(fresh.count) online guide(s) from iFixit"
+                        self.tableView.reloadData()
+                    }
+                    self.emptyLabel.isHidden = !self.guides.isEmpty
+                }
+            }
+        }
     }
 
     // MARK: - Navigation
@@ -150,7 +223,9 @@ extension GuideListViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: cellIdentifier, for: indexPath) as! GuideCell
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: cellIdentifier, for: indexPath) as? GuideCell else {
+            return UITableViewCell()
+        }
         let guide = guides[indexPath.row]
         cell.configure(with: guide)
         return cell

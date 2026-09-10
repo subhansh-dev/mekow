@@ -114,9 +114,16 @@ final class DataManager {
 
     // MARK: - iFixit Integration
 
-    /// Search iFixit for additional guides.
-    func searchOnlineGuides(query: String) async -> Result<[IFixitService.IFixitGuide], IFixitService.APIError> {
+    /// Search iFixit for additional guides (returns raw search hits).
+    /// Use fetchOnlineGuide(guideID:) with IFixitService.guideID(from:) to get full bodies,
+    /// or searchAndFetchOnlineGuides(query:) for one-shot full guides.
+    func searchOnlineGuides(query: String) async -> Result<IFixitService.SearchResult, IFixitService.APIError> {
         return await ifixitService.searchGuides(query: query)
+    }
+
+    /// Search + fetch full guide bodies (max 5).
+    func searchAndFetchOnlineGuides(query: String) async -> Result<[IFixitService.IFixitGuide], IFixitService.APIError> {
+        return await ifixitService.searchAndFetchGuides(query: query)
     }
 
     /// Fetch a specific iFixit guide.
@@ -186,4 +193,38 @@ final class DataManager {
 struct SampleData: Codable {
     let devices: [Device]
     let guides: [RepairGuide]
+}
+
+// MARK: - Repair Progress Store (UserDefaults, resume + completion)
+
+final class RepairProgressStore {
+    static let shared = RepairProgressStore()
+
+    private let defaults = UserDefaults.standard
+
+    private func stepKey(for guideID: String) -> String { "repairar.step.\(guideID)" }
+    private func doneKey(for guideID: String) -> String { "repairar.done.\(guideID)" }
+
+    func savedStep(for guideID: String) -> Int? {
+        // Integer returns 0 when missing — check existence first
+        guard defaults.object(forKey: stepKey(for: guideID)) != nil else { return nil }
+        return defaults.integer(forKey: stepKey(for: guideID))
+    }
+
+    func save(step: Int, for guideID: String) {
+        defaults.set(step, forKey: stepKey(for: guideID))
+    }
+
+    func markComplete(guideID: String) {
+        defaults.set(true, forKey: doneKey(for: guideID))
+    }
+
+    func isComplete(guideID: String) -> Bool {
+        defaults.bool(forKey: doneKey(for: guideID))
+    }
+
+    func clear(guideID: String) {
+        defaults.removeObject(forKey: stepKey(for: guideID))
+        defaults.removeObject(forKey: doneKey(for: guideID))
+    }
 }

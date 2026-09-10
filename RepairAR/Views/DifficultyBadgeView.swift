@@ -44,16 +44,14 @@ final class DifficultyBadgeView: UIView {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            leadingAnchor.constraint(equalTo: dotView.leadingAnchor, constant: -8),
-            centerYAnchor.constraint(equalTo: dotView.centerYAnchor),
-            dotView.widthAnchor.constraint(equalToConstant: 6),
-            dotView.heightAnchor.constraint(equalToConstant: 6),
             dotView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             dotView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dotView.widthAnchor.constraint(equalToConstant: 6),
+            dotView.heightAnchor.constraint(equalToConstant: 6),
             label.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 4),
-            trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
-            topAnchor.constraint(equalTo: label.topAnchor, constant: -4),
-            bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
         ])
     }
 

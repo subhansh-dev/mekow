@@ -21,7 +21,9 @@ final class StepDetailViewController: UIViewController {
     private var warningsStack: UIStackView!
     private var tipsStack: UIStackView!
     private var toolsStack: UIStackView!
-    private var imageView: UIImageView?
+    private var imageView: UIImageView!
+    private var videoButton: UIButton!
+    private var imageHeightConstraint: NSLayoutConstraint!
     private var durationLabel: UILabel!
 
     private let padding: CGFloat = 20
@@ -102,6 +104,24 @@ final class StepDetailViewController: UIViewController {
         instructionLabel.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(instructionLabel)
 
+        // Step media (iFixit images / video)
+        imageView = UIImageView()
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.layer.cornerRadius = 12
+        imageView.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(imageView)
+
+        videoButton = UIButton(type: .system)
+        videoButton.setTitle("Watch video", for: .normal)
+        videoButton.setImage(UIImage(systemName: "play.circle.fill"), for: .normal)
+        videoButton.tintColor = UIColor(hex: "#00D4FF")
+        videoButton.contentHorizontalAlignment = .leading
+        videoButton.translatesAutoresizingMaskIntoConstraints = false
+        videoButton.addTarget(self, action: #selector(openVideo), for: .touchUpInside)
+        contentView.addSubview(videoButton)
+
         // Warnings stack
         warningsStack = createSectionStack(icon: "exclamationmark.triangle.fill", iconColor: UIColor(hex: "#FF6B6B"))
         warningsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -144,7 +164,15 @@ final class StepDetailViewController: UIViewController {
             instructionLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             instructionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
 
-            warningsStack.topAnchor.constraint(equalTo: instructionLabel.bottomAnchor, constant: 20),
+            imageView.topAnchor.constraint(equalTo: instructionLabel.bottomAnchor, constant: 16),
+            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
+            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
+
+            videoButton.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8),
+            videoButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
+            videoButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
+
+            warningsStack.topAnchor.constraint(equalTo: videoButton.bottomAnchor, constant: 12),
             warningsStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             warningsStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
 
@@ -165,6 +193,26 @@ final class StepDetailViewController: UIViewController {
         stepNumberLabel.text = String(format: "%02d", step.stepNumber)
         titleLabel.text = step.title
         instructionLabel.text = step.instruction
+
+        // Media: collapse image when no URL to avoid empty gap
+        if imageHeightConstraint == nil {
+            imageHeightConstraint = imageView.heightAnchor.constraint(equalToConstant: 200)
+            imageHeightConstraint?.isActive = true
+        }
+        if let imgURL = step.imageURL, !imgURL.isEmpty {
+            imageView.isHidden = false
+            imageHeightConstraint?.constant = 200
+            imageView.loadImage(from: imgURL)
+        } else {
+            imageView.isHidden = true
+            imageHeightConstraint?.constant = 0
+        }
+
+        if let vidURL = step.videoURL, !vidURL.isEmpty {
+            videoButton.isHidden = false
+        } else {
+            videoButton.isHidden = true
+        }
 
         if let duration = step.durationFormatted {
             durationLabel.text = "⏱ \(duration)"
@@ -245,6 +293,13 @@ final class StepDetailViewController: UIViewController {
 
     @objc private func openAR() {
         let arVC = ARViewController(device: device, guide: guide)
+        // Start AR at this step's index for continuity
+        arVC.setInitialStep(stepIndex)
         present(arVC, animated: true)
+    }
+
+    @objc private func openVideo() {
+        guard let vidURL = step.videoURL, let url = URL(string: vidURL) else { return }
+        UIApplication.shared.open(url)
     }
 }

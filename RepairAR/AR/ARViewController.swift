@@ -24,6 +24,10 @@ final class ARViewController: UIViewController {
     private var annotationNodes: [String: AnnotationNode] = [:]
     private var componentStates: [String: ComponentState] = [:]
 
+    // Image-anchor tracking (real AR anchoring, drift-free)
+    private var deviceAnchorNode: SCNNode?
+    private var hasAnchoredToImage = false
+
     // UI elements
     private var stepCard: StepCardView!
     private var progressView: ProgressIndicatorView!
@@ -45,8 +49,22 @@ final class ARViewController: UIViewController {
     init(device: Device, guide: RepairGuide) {
         self.device = device
         self.guide = guide
+        // Resume where user left off (clamped), unless already completed
+        if !RepairProgressStore.shared.isComplete(guideID: guide.id),
+           let saved = RepairProgressStore.shared.savedStep(for: guide.id),
+           saved >= 0, saved < guide.steps.count {
+            self.currentStepIndex = saved
+        }
         super.init(nibName: nil, bundle: nil)
         self.modalPresentationStyle = .fullScreen
+    }
+
+    /// Jump to a specific step (e.g. from StepDetail continuity). Clamped.
+    func setInitialStep(_ index: Int) {
+        guard !guide.steps.isEmpty else { return }
+        currentStepIndex = max(0, min(index, guide.steps.count - 1))
+        // Persist immediately so relaunch resumes here too
+        RepairProgressStore.shared.save(step: currentStepIndex, for: guide.id)
     }
 
     required init?(coder: NSCoder) {
@@ -98,8 +116,17 @@ final class ARViewController: UIViewController {
         spriteScene.backgroundColor = .clear
         spriteScene.scaleMode = .resizeFill
 
-        // We'll add sprite nodes directly to the SKScene
-        // and position them based on 3D->2D projections
+        // Wire overlay so SKNodes actually render on top of AR
+        arView.overlaySKScene = spriteScene
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Keep overlay coords in sync with view size (rotation / layout)
+        guard spriteScene != nil else { return }
+        if spriteScene.size != view.bounds.size {
+            spriteScene.size = view.bounds.size
+        }
     }
 
     private func startARSession() {
@@ -113,6 +140,11 @@ final class ARViewController: UIViewController {
             configuration.detectionImages = referenceImages
             configuration.maximumNumberOfTrackedImages = 1
         }
+
+        // Reset anchor glue on fresh session (old image nodes are invalid after reset)
+        deviceAnchorNode = nil
+        sceneManager.anchorNode = nil
+        hasAnchoredToImage = false
 
         arView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
     }
@@ -296,9 +328,13 @@ final class ARViewController: UIViewController {
             showStatus("Detecting device...")
         case .detected:
             loadingOverlay.isHidden = true
-            showStatus("Device detected!")
             placeComponentOverlays()
             updateStepUI()
+            if currentStepIndex > 0 {
+                showStatus("Resumed at step \(currentStepIndex + 1)/\(guide.totalSteps)")
+            } else {
+                showStatus("Device detected!")
+            }
 
             // Fade out status after a moment
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -340,6 +376,11 @@ final class ARViewController: UIViewController {
         guard currentStepIndex < guide.steps.count else { return }
         let currentStep = guide.steps[currentStepIndex]
 
+        // Reset all first so going backwards clears stale completed states
+        for key in componentStates.keys {
+            componentStates[key] = .notReached
+        }
+
         // Mark completed steps' components
         for i in 0..<currentStepIndex {
             let step = guide.steps[i]
@@ -348,7 +389,7 @@ final class ARViewController: UIViewController {
             }
         }
 
-        // Mark current step's components as focus
+        // Mark current step's components as focus (overrides completed for shared IDs)
         for componentID in currentStep.componentIDs {
             componentStates[componentID] = .currentFocus
         }
@@ -366,7 +407,7 @@ final class ARViewController: UIViewController {
     // MARK: - Annotations
 
     private func updateAnnotations(for step: RepairStep) {
-        // Remove old annotations
+        // Remove old annotations (SKNodes in overlay scene)
         annotationNodes.values.forEach { $0.removeFromParent() }
         annotationNodes.removeAll()
 
@@ -381,10 +422,16 @@ final class ARViewController: UIViewController {
                 color: UIColor(hex: "#00D4FF")
             )
 
-            // Position annotation above the component
-            let position = node.presentation.position
-            annotation.position = SCNVector3(position.x, position.y + 0.05, position.z)
-            arView.scene.rootNode.addChildNode(annotation)
+            // Project 3D world position to 2D overlay (SKScene coords, origin bottom-left)
+            let worldPos = node.presentation.worldPosition
+            let screenPos = arView.projectPoint(worldPos)
+            // Behind camera (z > 1) — skip so we don't place off-screen labels
+            guard screenPos.z < 1.0 else { continue }
+            annotation.position = CGPoint(
+                x: CGFloat(screenPos.x),
+                y: spriteScene.size.height - CGFloat(screenPos.y)
+            )
+            spriteScene.addChild(annotation)
             annotationNodes[componentID] = annotation
         }
     }
@@ -394,7 +441,10 @@ final class ARViewController: UIViewController {
     @objc private func nextStep() {
         guard currentStepIndex < guide.steps.count - 1 else {
             showCompletionHaptic()
-            showStatus("Guide complete! 🎉")
+            progressView.markComplete()
+            RepairProgressStore.shared.markComplete(guideID: guide.id)
+            showStatus("Guide complete!")
+            showCompletionAlert()
             return
         }
 
@@ -402,6 +452,26 @@ final class ARViewController: UIViewController {
         updateStepUI()
         updateComponentStates()
         stepCompletionHaptic()
+    }
+
+    private func showCompletionAlert() {
+        let alert = UIAlertController(
+            title: "Repair complete",
+            message: guide.conclusion ?? "Nice work. Reassemble in reverse order and test before closing up.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Review steps", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Restart", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            RepairProgressStore.shared.clear(guideID: self.guide.id)
+            self.currentStepIndex = 0
+            self.updateStepUI()
+            self.updateComponentStates()
+        })
+        alert.addAction(UIAlertAction(title: "Done", style: .default) { [weak self] _ in
+            self?.closeTapped()
+        })
+        present(alert, animated: true)
     }
 
     @objc private func previousStep() {
@@ -424,6 +494,8 @@ final class ARViewController: UIViewController {
         )
 
         progressView.setCurrentStep(currentStepIndex)
+        // Persist for resume
+        RepairProgressStore.shared.save(step: currentStepIndex, for: guide.id)
 
         // Update nav button states
         previousButton.alpha = currentStepIndex > 0 ? 1.0 : 0.3
@@ -528,7 +600,22 @@ extension ARViewController: ARSCNViewDelegate {
 
     func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
         guard anchor is ARImageAnchor else { return }
-        // Image detected — could trigger device detection
+        // Real device anchor found — glue overlays to it so they don't drift
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.deviceAnchorNode = node
+            // Future placements go straight under anchor
+            self.sceneManager.anchorNode = node
+            // Move existing world-origin overlays under anchor (keep local layout)
+            if !self.componentNodes.isEmpty && !self.hasAnchoredToImage {
+                self.hasAnchoredToImage = true
+                self.sceneManager.reparentAll(to: node)
+                // Grounding surface for visual stability
+                let surface = self.sceneManager.createDeviceSurface()
+                node.addChildNode(surface)
+                self.showStatus("Anchored to device")
+            }
+        }
     }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
@@ -539,11 +626,18 @@ extension ARViewController: ARSCNViewDelegate {
     }
 
     private func updateAnnotationScreenPositions() {
+        guard arView != nil, spriteScene != nil else { return }
         for (componentID, annotation) in annotationNodes {
             guard let overlayNode = componentNodes[componentID] else { continue }
             let worldPos = overlayNode.presentation.worldPosition
             let screenPos = arView.projectPoint(worldPos)
 
+            // Hide labels for points behind camera
+            if screenPos.z > 1.0 {
+                annotation.alpha = 0
+                continue
+            }
+            annotation.alpha = 1
             annotation.position = CGPoint(
                 x: CGFloat(screenPos.x),
                 y: spriteScene.size.height - CGFloat(screenPos.y)
@@ -556,14 +650,20 @@ extension ARViewController: ARSCNViewDelegate {
 
 extension ARViewController: ARSessionDelegate {
     func session(_ session: ARSession, didFailWithError error: Error) {
-        showStatus("AR Error: \(error.localizedDescription)")
+        DispatchQueue.main.async { [weak self] in
+            self?.showStatus("AR Error: \(error.localizedDescription)")
+        }
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
-        showStatus("AR session interrupted")
+        DispatchQueue.main.async { [weak self] in
+            self?.showStatus("AR session interrupted")
+        }
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
-        startARSession()
+        DispatchQueue.main.async { [weak self] in
+            self?.startARSession()
+        }
     }
 }

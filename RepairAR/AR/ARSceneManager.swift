@@ -11,6 +11,10 @@ final class ARSceneManager {
     private let scene: SCNScene
     private var placedNodes: [String: SCNNode] = [:]
 
+    /// When set, new nodes attach under the detected image anchor instead of world root.
+    /// This keeps overlays glued to the real device and prevents drift on tracking reset.
+    var anchorNode: SCNNode?
+
     // Physical device dimensions (meters) — used to map normalized coords to AR space
     private let deviceWidth: Float = 0.32   // ~32cm laptop width
     private let deviceHeight: Float = 0.22  // ~22cm laptop depth
@@ -61,8 +65,25 @@ final class ARSceneManager {
         node.position = SCNVector3(x, y, z)
         node.eulerAngles.x = -.pi / 2  // Lay flat on surface
 
-        scene.rootNode.addChildNode(node)
+        // Prefer image anchor parent when available (drift-free), else world root
+        let parent = anchorNode ?? scene.rootNode
+        parent.addChildNode(node)
         placedNodes[node.name ?? UUID().uuidString] = node
+    }
+
+    /// Reparent all placed nodes under a new parent, preserving local layout.
+    /// Call when an ARImageAnchor is detected after initial world-origin placement.
+    func reparentAll(to parent: SCNNode) {
+        anchorNode = parent
+        for node in placedNodes.values {
+            // Keep local position (device-relative), just change parent to anchor
+            let localPos = node.position
+            let localRot = node.eulerAngles
+            node.removeFromParentNode()
+            node.position = localPos
+            node.eulerAngles = localRot
+            parent.addChildNode(node)
+        }
     }
 
     /// Remove a previously placed node.
