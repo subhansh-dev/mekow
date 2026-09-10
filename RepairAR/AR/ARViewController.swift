@@ -2,6 +2,7 @@ import UIKit
 import ARKit
 import SceneKit
 import SpriteKit
+import AVFoundation
 
 // MARK: - AR View Controller
 // Main AR scene controller with component overlays and step-by-step guidance.
@@ -44,6 +45,10 @@ final class ARViewController: UIViewController {
     private let buttonSize: CGFloat = 44
     private let padding: CGFloat = 16
 
+    // Annotation throttle (avoid 60Hz main-thread dispatch)
+    private var lastAnnotationUpdate: TimeInterval = 0
+    private let annotationUpdateInterval: TimeInterval = 1.0 / 20.0 // 20fps max
+
     // MARK: - Init
 
     init(device: Device, guide: RepairGuide) {
@@ -84,7 +89,7 @@ final class ARViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        startARSession()
+        checkCameraPermissionAndStart()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -129,17 +134,49 @@ final class ARViewController: UIViewController {
         }
     }
 
-    private func startARSession() {
-        let configuration = ARWorldTrackingConfiguration()
-        configuration.planeDetection = [.horizontal]
-        configuration.isLightEstimationEnabled = true
-
-        // If we have reference images for detection
-        let referenceImages = detectionService.createReferenceSet()
-        if !referenceImages.isEmpty {
-            configuration.detectionImages = referenceImages
-            configuration.maximumNumberOfTrackedImages = 1
+    private func checkCameraPermissionAndStart() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            startARSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.startARSession()
+                    } else {
+                        self?.showCameraDenied()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            showCameraDenied()
+        @unknown default:
+            startARSession()
         }
+    }
+
+    private func showCameraDenied() {
+        loadingOverlay.isHidden = true
+        let alert = UIAlertController(
+            title: "Camera needed",
+            message: "RepairAR needs camera access for AR. Enable it in Settings > Privacy > Camera.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Open Settings", style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        })
+        alert.addAction(UIAlertAction(title: "Close", style: .cancel) { [weak self] _ in
+            self?.closeTapped()
+        })
+        present(alert, animated: true)
+    }
+
+    private func startARSession() {
+        // Single source of truth for config (ARSceneManager)
+        let referenceImages = detectionService.createReferenceSet()
+        let configuration = sceneManager.createConfiguration(with: referenceImages)
 
         // Reset anchor glue on fresh session (old image nodes are invalid after reset)
         deviceAnchorNode = nil
@@ -291,13 +328,19 @@ final class ARViewController: UIViewController {
             .ignoreHiddenNodes: true
         ])
 
-        if let result = hitResults.first,
-           let nodeName = result.node.name,
-           let component = device.components.first(where: { $0.id == nodeName }) {
-            showComponentInfo(component)
-        } else {
-            dismissComponentInfo()
+        // Walk up parent chain — container nodes have no name, child geometry does
+        if let result = hitResults.first {
+            var node: SCNNode? = result.node
+            while let n = node {
+                if let name = n.name,
+                   let component = device.components.first(where: { $0.id == name }) {
+                    showComponentInfo(component)
+                    return
+                }
+                node = n.parent
+            }
         }
+        dismissComponentInfo()
     }
 
     // MARK: - Scene Initialization
@@ -407,9 +450,12 @@ final class ARViewController: UIViewController {
     // MARK: - Annotations
 
     private func updateAnnotations(for step: RepairStep) {
-        // Remove old annotations (SKNodes in overlay scene)
-        annotationNodes.values.forEach { $0.removeFromParent() }
+        // Fade out old annotations instead of instant remove (uses animateOut)
+        let old = Array(annotationNodes.values)
         annotationNodes.removeAll()
+        for node in old {
+            node.animateOut {}
+        }
 
         // Add annotations for highlighted components
         for componentID in step.componentIDs {
@@ -617,7 +663,10 @@ extension ARViewController: ARSCNViewDelegate {
     }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
-        // Update SpriteKit overlay positions based on 3D node positions
+        // Throttle to 20fps + skip when nothing to track (was 60Hz main dispatch)
+        guard time - lastAnnotationUpdate >= annotationUpdateInterval else { return }
+        guard !annotationNodes.isEmpty else { return }
+        lastAnnotationUpdate = time
         DispatchQueue.main.async { [weak self] in
             self?.updateAnnotationScreenPositions()
         }

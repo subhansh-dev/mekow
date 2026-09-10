@@ -99,9 +99,10 @@ final class DeviceDetectionService: NSObject {
     }
 
     /// Process AR frame results for image detection.
+    /// Prefers currently-tracked anchors; falls back to the first candidate.
     func processDetectedImages(_ anchors: [ARImageAnchor]) -> Device? {
-        guard let bestMatch = anchors.max(by: { $0.confidence < $1.confidence }),
-              let deviceID = bestMatch.referenceImage.name else {
+        let bestMatch = anchors.first(where: { $0.isTracked }) ?? anchors.first
+        guard bestMatch?.referenceImage.name != nil else {
             return nil
         }
 
